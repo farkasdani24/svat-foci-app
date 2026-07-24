@@ -47,7 +47,7 @@ const C = {
 };
 
 const LOCATIONS = ["Waldorf suli", "Vasas Jégpálya"];
-const LOCATION_COSTS = { "Waldorf suli": 25000, "Vasas Jégpálya": 10000 };
+const LOCATION_COSTS = { "Waldorf suli": 25000, "Vasas Jégpálya": 8500 };
 const ADMIN_EMAIL = "svatsportegyesulet@gmail.com";
 
 const DEFAULT_PLAYERS = [
