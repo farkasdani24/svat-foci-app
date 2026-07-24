@@ -156,6 +156,7 @@ export default function App() {
   const [occasions, setOccasions] = useState([]);
   const [extraFees, setExtraFees] = useState([]);
   const [adminPassword, setAdminPassword] = useState(null);
+  const [startingBalance, setStartingBalance] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
   const [storageError, setStorageError] = useState(false);
 
@@ -191,11 +192,12 @@ export default function App() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [pRes, oRes, eRes, sRes] = await Promise.all([
+      const [pRes, oRes, eRes, sRes, sbRes] = await Promise.all([
         supabase.from("players").select("*"),
         supabase.from("occasions").select("*"),
         supabase.from("extra_fees").select("*"),
         supabase.from("settings").select("*").eq("key", "admin_password").maybeSingle(),
+        supabase.from("settings").select("*").eq("key", "starting_balance").maybeSingle(),
       ]);
 
       let playerRows = pRes.data || [];
@@ -210,6 +212,7 @@ export default function App() {
       setOccasions(occ);
       setExtraFees((eRes.data || []).map(fromDbExtra));
       setAdminPassword(sRes.data ? sRes.data.value : null);
+      setStartingBalance(sbRes.data ? Number(sbRes.data.value) || 0 : 0);
       setSelectedId(occ[0]?.id ?? null);
     } catch (err) {
       console.error(err);
@@ -250,6 +253,16 @@ export default function App() {
       setAdminError("");
     } else {
       setAdminError("Hibás jelszó");
+    }
+  }
+
+  async function updateStartingBalance(value) {
+    const num = Number(value) || 0;
+    setStartingBalance(num);
+    const { error } = await supabase.from("settings").upsert({ key: "starting_balance", value: String(num) });
+    if (error) {
+      console.error(error);
+      setStorageError(true);
     }
   }
 
@@ -486,10 +499,10 @@ export default function App() {
     const extraIncome = extraFees.reduce((sum, f) => sum + f.targetIds.filter((id) => f.payments[id]).length * (f.amount || 0), 0);
     const income = feeIncome + extraIncome;
     const expense = realized.reduce((sum, o) => sum + (o.cost || 0), 0);
-    const balance = income - expense;
+    const balance = startingBalance + income - expense;
     const outstanding = debts().reduce((sum, p) => sum + p.debt, 0);
     const upcomingCost = upcoming.reduce((sum, o) => sum + (o.cost || 0), 0);
-    return { income, expense, balance, outstanding, upcomingCost, projected: balance + outstanding };
+    return { income, expense, balance, outstanding, upcomingCost, startingBalance, projected: balance + outstanding };
   }
 
   function stats() {
@@ -645,6 +658,7 @@ export default function App() {
             extraDraft={extraDraft}
             setExtraDraft={setExtraDraft}
             submitExtraFee={submitExtraFee}
+            updateStartingBalance={updateStartingBalance}
           />
         )}
 
@@ -999,7 +1013,7 @@ function PlayersTab({ players, isAdmin, openPlayerForm, setPlayerActive, permane
 }
 
 function MoneyTab(props) {
-  const { debts, kassza, extraFees, players, isAdmin, playerName, toggleExtraPayment, deleteExtraFee, showExtraForm, setShowExtraForm, extraDraft, setExtraDraft, submitExtraFee } = props;
+  const { debts, kassza, extraFees, players, isAdmin, playerName, toggleExtraPayment, deleteExtraFee, showExtraForm, setShowExtraForm, extraDraft, setExtraDraft, submitExtraFee, updateStartingBalance } = props;
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
@@ -1020,6 +1034,25 @@ function MoneyTab(props) {
           <span className="text-sm" style={{ color: C.textMuted }}>Jelenlegi egyenleg</span>
           <span className="font-display text-3xl" style={{ color: kassza.balance >= 0 ? "#5FCB94" : C.accent2 }}>{fmtHUF(kassza.balance)}</span>
         </div>
+        {isAdmin ? (
+          <div className="flex items-center justify-between pt-2" style={{ borderTop: `1px solid ${C.lineSoft}` }}>
+            <span className="text-xs" style={{ color: C.textMuted }}>Kezdő egyenleg (induláskori kasszapénz)</span>
+            <input
+              type="number"
+              defaultValue={kassza.startingBalance}
+              onBlur={(e) => updateStartingBalance(e.target.value)}
+              style={{ background: C.bgElevated, border: `1px solid ${C.line}`, color: C.text, width: 100 }}
+              className="px-2 py-1 rounded-lg outline-none text-sm text-right"
+            />
+          </div>
+        ) : (
+          kassza.startingBalance !== 0 && (
+            <div className="flex items-center justify-between pt-2 text-xs" style={{ borderTop: `1px solid ${C.lineSoft}`, color: C.textMuted }}>
+              <span>Ebből kezdő egyenleg</span>
+              <span>{fmtHUF(kassza.startingBalance)}</span>
+            </div>
+          )
+        )}
         <div className="grid grid-cols-2 gap-3 pt-2" style={{ borderTop: `1px solid ${C.lineSoft}` }}>
           <div>
             <p className="text-[11px]" style={{ color: C.textMuted }}>Befolyt eddig</p>
