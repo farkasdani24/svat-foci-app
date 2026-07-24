@@ -15,6 +15,8 @@ import {
   Copy,
   TrendingUp,
   Trophy,
+  Archive,
+  RotateCcw,
 } from "lucide-react";
 import {
   BarChart,
@@ -49,11 +51,11 @@ const LOCATION_COSTS = { "Waldorf suli": 25000, "Vasas Jégpálya": 10000 };
 const ADMIN_EMAIL = "svatsportegyesulet@gmail.com";
 
 const DEFAULT_PLAYERS = [
-  { id: "p1", name: "Krausz Tamás", email: "", phone: "", photo: "", jerseyNumber: "", isAdmin: true },
-  { id: "p2", name: "Farkas Dániel", email: "farkas.dani24@gmail.com", phone: "", photo: "", jerseyNumber: "", isAdmin: true },
-  { id: "p3", name: "Molnár Antal", email: "", phone: "", photo: "", jerseyNumber: "", isAdmin: false },
-  { id: "p4", name: "Széles Tibor", email: "", phone: "", photo: "", jerseyNumber: "", isAdmin: false },
-  { id: "p5", name: "Kósa Gyula", email: "", phone: "", photo: "", jerseyNumber: "", isAdmin: false },
+  { id: "p1", name: "Krausz Tamás", email: "", phone: "", photo: "", jerseyNumber: "", isAdmin: true, isActive: true },
+  { id: "p2", name: "Farkas Dániel", email: "farkas.dani24@gmail.com", phone: "", photo: "", jerseyNumber: "", isAdmin: true, isActive: true },
+  { id: "p3", name: "Molnár Antal", email: "", phone: "", photo: "", jerseyNumber: "", isAdmin: false, isActive: true },
+  { id: "p4", name: "Széles Tibor", email: "", phone: "", photo: "", jerseyNumber: "", isAdmin: false, isActive: true },
+  { id: "p5", name: "Kósa Gyula", email: "", phone: "", photo: "", jerseyNumber: "", isAdmin: false, isActive: true },
 ];
 
 function uid() {
@@ -130,10 +132,10 @@ function buildMailto(occasion, players) {
 
 // --- Supabase <-> app adat mapper függvények (snake_case <-> camelCase) ---
 function fromDbPlayer(row) {
-  return { id: row.id, name: row.name, email: row.email || "", phone: row.phone || "", photo: row.photo || "", jerseyNumber: row.jersey_number || "", isAdmin: !!row.is_admin };
+  return { id: row.id, name: row.name, email: row.email || "", phone: row.phone || "", photo: row.photo || "", jerseyNumber: row.jersey_number || "", isAdmin: !!row.is_admin, isActive: row.is_active !== false };
 }
 function toDbPlayer(p) {
-  return { id: p.id, name: p.name, email: p.email || null, phone: p.phone || null, photo: p.photo || null, jersey_number: p.jerseyNumber || null, is_admin: !!p.isAdmin };
+  return { id: p.id, name: p.name, email: p.email || null, phone: p.phone || null, photo: p.photo || null, jersey_number: p.jerseyNumber || null, is_admin: !!p.isAdmin, is_active: p.isActive !== false };
 }
 function fromDbOccasion(row) {
   return { id: row.id, type: row.type, title: row.title, date: row.date, startTime: row.start_time, endTime: row.end_time, location: row.location, locationOther: row.location_other || "", fee: row.fee || 0, cost: row.cost || 0, responses: row.responses || {}, payments: row.payments || {} };
@@ -166,7 +168,7 @@ export default function App() {
 
   const [showPlayerForm, setShowPlayerForm] = useState(false);
   const [editingPlayer, setEditingPlayer] = useState(null);
-  const [playerDraft, setPlayerDraft] = useState({ name: "", email: "", phone: "", photo: "", jerseyNumber: "", isAdmin: false });
+  const [playerDraft, setPlayerDraft] = useState({ name: "", email: "", phone: "", photo: "", jerseyNumber: "", isAdmin: false, isActive: true });
 
   const [showNewForm, setShowNewForm] = useState(false);
   const [newType, setNewType] = useState("foci");
@@ -254,10 +256,10 @@ export default function App() {
   function openPlayerForm(player) {
     if (player) {
       setEditingPlayer(player);
-      setPlayerDraft({ name: player.name, email: player.email || "", phone: player.phone || "", photo: player.photo || "", jerseyNumber: player.jerseyNumber || "", isAdmin: !!player.isAdmin });
+      setPlayerDraft({ name: player.name, email: player.email || "", phone: player.phone || "", photo: player.photo || "", jerseyNumber: player.jerseyNumber || "", isAdmin: !!player.isAdmin, isActive: player.isActive !== false });
     } else {
       setEditingPlayer(null);
-      setPlayerDraft({ name: "", email: "", phone: "", photo: "", jerseyNumber: "", isAdmin: false });
+      setPlayerDraft({ name: "", email: "", phone: "", photo: "", jerseyNumber: "", isAdmin: false, isActive: true });
     }
     setShowPlayerForm(true);
   }
@@ -280,7 +282,18 @@ export default function App() {
     setEditingPlayer(null);
   }
 
-  async function deletePlayer(id) {
+  async function setPlayerActive(player, isActive) {
+    const row = toDbPlayer({ ...player, isActive });
+    const { error } = await supabase.from("players").upsert(row);
+    if (error) {
+      console.error(error);
+      setStorageError(true);
+      return;
+    }
+    setPlayers((prev) => prev.map((p) => (p.id === player.id ? { ...p, isActive } : p)));
+  }
+
+  async function permanentlyDeletePlayer(id) {
     const { error } = await supabase.from("players").delete().eq("id", id);
     if (error) {
       console.error(error);
@@ -402,7 +415,7 @@ export default function App() {
 
   async function submitExtraFee() {
     if (!extraDraft.label.trim() || !extraDraft.amount) return;
-    const targetIds = extraDraft.targetIds.length > 0 ? extraDraft.targetIds : players.map((p) => p.id);
+    const targetIds = extraDraft.targetIds.length > 0 ? extraDraft.targetIds : players.filter((p) => p.isActive !== false).map((p) => p.id);
     const payments = {};
     targetIds.forEach((id) => (payments[id] = false));
     const f = { id: uid(), label: extraDraft.label, amount: Number(extraDraft.amount), targetIds, payments };
@@ -607,7 +620,15 @@ export default function App() {
           />
         )}
 
-        {tab === "players" && <PlayersTab players={players} isAdmin={isAdmin} openPlayerForm={openPlayerForm} deletePlayer={deletePlayer} />}
+        {tab === "players" && (
+          <PlayersTab
+            players={players}
+            isAdmin={isAdmin}
+            openPlayerForm={openPlayerForm}
+            setPlayerActive={setPlayerActive}
+            permanentlyDeletePlayer={permanentlyDeletePlayer}
+          />
+        )}
 
         {tab === "money" && (
           <MoneyTab
@@ -862,7 +883,9 @@ function HomeTab(props) {
 
           <div className="space-y-2 mt-3">
             {players.length === 0 && <p style={{ color: C.textMuted }} className="text-sm">Adj hozzá játékosokat a Játékosok fülön.</p>}
-            {players.map((p) => {
+            {players
+              .filter((p) => p.isActive !== false || (selected.responses || {})[p.id] !== undefined)
+              .map((p) => {
               const response = (selected.responses || {})[p.id];
               const attending = response === "yes";
               const paid = selected.payments[p.id];
@@ -871,7 +894,7 @@ function HomeTab(props) {
                 <div key={p.id} className="flex items-center justify-between py-1.5" style={{ borderBottom: `1px solid ${C.lineSoft}` }}>
                   <div className="flex items-center gap-2">
                     <Avatar player={p} size={32} />
-                    <span className="text-sm">{p.name}{p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}</span>
+                    <span className="text-sm">{p.name}{p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}{p.isActive === false ? " (inaktív)" : ""}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     {attending && isAdmin && (
@@ -897,7 +920,16 @@ function HomeTab(props) {
   );
 }
 
-function PlayersTab({ players, isAdmin, openPlayerForm, deletePlayer }) {
+function PlayersTab({ players, isAdmin, openPlayerForm, setPlayerActive, permanentlyDeletePlayer }) {
+  const active = players.filter((p) => p.isActive !== false);
+  const inactive = players.filter((p) => p.isActive === false);
+
+  function handlePermanentDelete(p) {
+    if (window.confirm(`Biztosan véglegesen törlöd ${p.name} profilját? Ez nem vonható vissza.`)) {
+      permanentlyDeletePlayer(p.id);
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
@@ -908,7 +940,7 @@ function PlayersTab({ players, isAdmin, openPlayerForm, deletePlayer }) {
       </div>
       {players.length === 0 && <p style={{ color: C.textMuted }} className="text-sm">Még nincs egy játékos sem. Add hozzá az elsőt!</p>}
       <div className="space-y-2">
-        {players.map((p) => (
+        {active.map((p) => (
           <div key={p.id} style={{ background: C.bgCard, border: `1px solid ${C.line}` }} className="rounded-xl p-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Avatar player={p} size={44} />
@@ -924,11 +956,44 @@ function PlayersTab({ players, isAdmin, openPlayerForm, deletePlayer }) {
             </div>
             <div className="flex items-center gap-1">
               <button onClick={() => openPlayerForm(p)} style={{ color: C.textMuted }} className="p-2"><Pencil size={16} /></button>
-              {isAdmin && <button onClick={() => deletePlayer(p.id)} style={{ color: C.accent2 }} className="p-2"><Trash2 size={16} /></button>}
+              {isAdmin && (
+                <button onClick={() => setPlayerActive(p, false)} title="Archiválás (kikerül az aktív listából, de minden adata megmarad)" style={{ color: C.accent2 }} className="p-2">
+                  <Archive size={16} />
+                </button>
+              )}
             </div>
           </div>
         ))}
       </div>
+
+      {inactive.length > 0 && (
+        <div className="mt-6">
+          <h3 className="font-display text-xl mb-2" style={{ color: C.textMuted }}>INAKTÍV JÁTÉKOSOK</h3>
+          <p className="text-xs mb-2" style={{ color: C.textMuted }}>
+            Az itt lévők nem jelennek meg új alkalmaknál, de a korábbi adataik (kassza, statisztika, esetleges tartozás) megmaradnak.
+          </p>
+          <div className="space-y-2">
+            {inactive.map((p) => (
+              <div key={p.id} style={{ background: C.bgCard, border: `1px solid ${C.lineSoft}`, opacity: 0.7 }} className="rounded-xl p-3 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Avatar player={p} size={40} />
+                  <p className="text-sm">{p.name}</p>
+                </div>
+                {isAdmin && (
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setPlayerActive(p, true)} title="Visszaállítás aktívvá" style={{ color: "#5FCB94" }} className="p-2">
+                      <RotateCcw size={16} />
+                    </button>
+                    <button onClick={() => handlePermanentDelete(p)} title="Végleges törlés" style={{ color: C.accent2 }} className="p-2">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1025,7 +1090,7 @@ function MoneyTab(props) {
           </Field>
           <Field label="Kikre vonatkozik? (üresen: mindenki)">
             <div className="flex flex-wrap gap-2 mt-1">
-              {players.map((p) => {
+              {players.filter((p) => p.isActive !== false).map((p) => {
                 const checked = extraDraft.targetIds.includes(p.id);
                 return (
                   <button key={p.id} onClick={() => setExtraDraft({ ...extraDraft, targetIds: checked ? extraDraft.targetIds.filter((id) => id !== p.id) : [...extraDraft.targetIds, p.id] })} style={{ background: checked ? C.accent : "transparent", color: checked ? C.bg : C.textMuted, border: `1px solid ${checked ? C.accent : C.line}` }} className="text-xs px-2 py-1 rounded-full">
