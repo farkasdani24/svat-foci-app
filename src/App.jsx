@@ -18,6 +18,7 @@ import {
   Archive,
   RotateCcw,
   Recycle,
+  Check,
 } from "lucide-react";
 import {
   BarChart,
@@ -187,10 +188,10 @@ function toDbPlayer(p) {
   return { id: p.id, name: p.name, email: p.email || null, phone: p.phone || null, photo: p.photo || null, jersey_number: p.jerseyNumber || null, is_admin: !!p.isAdmin, is_active: p.isActive !== false, birthday: p.birthday || null };
 }
 function fromDbOccasion(row) {
-  return { id: row.id, type: row.type, title: row.title, date: row.date, startTime: row.start_time, endTime: row.end_time, location: row.location, locationOther: row.location_other || "", fee: row.fee || 0, cost: row.cost || 0, responses: row.responses || {}, payments: row.payments || {}, paymentMethod: row.payment_method || {}, motmVotes: row.motm_votes || {} };
+  return { id: row.id, type: row.type, title: row.title, date: row.date, startTime: row.start_time, endTime: row.end_time, location: row.location, locationOther: row.location_other || "", fee: row.fee || 0, cost: row.cost || 0, responses: row.responses || {}, payments: row.payments || {}, paymentMethod: row.payment_method || {}, motmVotes: row.motm_votes || {}, isDeleted: !!row.is_deleted, deletedAt: row.deleted_at || null };
 }
 function toDbOccasion(o) {
-  return { id: o.id, type: o.type, title: o.title, date: o.date, start_time: o.startTime, end_time: o.endTime, location: o.location, location_other: o.locationOther || null, fee: o.fee || 0, cost: o.cost || 0, responses: o.responses || {}, payments: o.payments || {}, payment_method: o.paymentMethod || {}, motm_votes: o.motmVotes || {} };
+  return { id: o.id, type: o.type, title: o.title, date: o.date, start_time: o.startTime, end_time: o.endTime, location: o.location, location_other: o.locationOther || null, fee: o.fee || 0, cost: o.cost || 0, responses: o.responses || {}, payments: o.payments || {}, payment_method: o.paymentMethod || {}, motm_votes: o.motmVotes || {}, is_deleted: !!o.isDeleted, deleted_at: o.deletedAt || null };
 }
 function fromDbExtra(row) {
   return { id: row.id, label: row.label, amount: row.amount, targetIds: row.target_ids || [], payments: row.payments || {} };
@@ -263,13 +264,28 @@ export default function App() {
         playerRows = refetch.data || [];
       }
 
-      const occ = (oRes.data || []).map(fromDbOccasion).sort((a, b) => new Date(b.date) - new Date(a.date));
+      let occ = (oRes.data || []).map(fromDbOccasion).sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      const expired = occ.filter((o) => o.isDeleted && o.deletedAt && now - new Date(o.deletedAt).getTime() > THIRTY_DAYS_MS);
+      if (expired.length > 0) {
+        expired.forEach((o) => {
+          supabase.from("occasions").delete().eq("id", o.id).then(({ error }) => {
+            if (error) console.error(error);
+          });
+        });
+        const expiredIds = new Set(expired.map((o) => o.id));
+        occ = occ.filter((o) => !expiredIds.has(o.id));
+      }
+
+      const activeOcc = occ.filter((o) => !o.isDeleted);
       setPlayers(playerRows.map(fromDbPlayer));
       setOccasions(occ);
       setExtraFees((eRes.data || []).map(fromDbExtra));
       setAdminPassword(sRes.data ? sRes.data.value : null);
       setStartingBalance(sbRes.data ? Number(sbRes.data.value) || 0 : 0);
-      setSelectedId(occ[0]?.id ?? null);
+      setSelectedId(activeOcc[0]?.id ?? null);
     } catch (err) {
       console.error(err);
       setStorageError(true);
@@ -502,17 +518,47 @@ export default function App() {
   }
 
   async function deleteOccasion(occId) {
-    const { error } = await supabase.from("occasions").delete().eq("id", occId);
+    if (!window.confirm("Biztosan törlöd ezt az alkalmat? A lomtárba kerül, onnan 30 napig visszaállítható.")) return;
+    const target = occasions.find((o) => o.id === occId);
+    if (!target) return;
+    const updated = { ...target, isDeleted: true, deletedAt: new Date().toISOString() };
+    const { error } = await supabase.from("occasions").update(toDbOccasion(updated)).eq("id", occId);
     if (error) {
       console.error(error);
       setStorageError(true);
       return;
     }
     setOccasions((prev) => {
-      const next = prev.filter((o) => o.id !== occId);
-      setSelectedId(next[0]?.id ?? null);
+      const next = prev.map((o) => (o.id === occId ? updated : o));
+      const nextActive = next.filter((o) => !o.isDeleted);
+      setSelectedId(nextActive[0]?.id ?? null);
       return next;
     });
+  }
+
+  async function restoreOccasion(occId) {
+    const target = occasions.find((o) => o.id === occId);
+    if (!target) return;
+    const updated = { ...target, isDeleted: false, deletedAt: null };
+    const { error } = await supabase.from("occasions").update(toDbOccasion(updated)).eq("id", occId);
+    if (error) {
+      console.error(error);
+      setStorageError(true);
+      return;
+    }
+    setOccasions((prev) => prev.map((o) => (o.id === occId ? updated : o)));
+    setSelectedId(occId);
+  }
+
+  async function permanentlyDeleteOccasion(occId) {
+    if (!window.confirm("Ez véglegesen törli az alkalmat, nem lesz visszaállítható. Biztosan folytatod?")) return;
+    const { error } = await supabase.from("occasions").delete().eq("id", occId);
+    if (error) {
+      console.error(error);
+      setStorageError(true);
+      return;
+    }
+    setOccasions((prev) => prev.filter((o) => o.id !== occId));
   }
 
   async function submitExtraFee() {
@@ -562,10 +608,13 @@ export default function App() {
     return players.find((p) => p.id === id)?.name || "Ismeretlen";
   }
 
+  const activeOccasions = occasions.filter((o) => !o.isDeleted);
+  const deletedOccasions = occasions.filter((o) => o.isDeleted);
+
   function debts() {
     const map = {};
     players.forEach((p) => (map[p.id] = 0));
-    occasions.forEach((o) => {
+    activeOccasions.forEach((o) => {
       Object.keys(o.responses || {}).forEach((id) => {
         if (o.responses[id] === "yes" && !o.payments[id]) map[id] = (map[id] || 0) + (o.fee || 0);
       });
@@ -579,8 +628,8 @@ export default function App() {
   }
 
   function kassza() {
-    const realized = occasions.filter(isOccasionPast);
-    const upcoming = occasions.filter((o) => !isOccasionPast(o));
+    const realized = activeOccasions.filter(isOccasionPast);
+    const upcoming = activeOccasions.filter((o) => !isOccasionPast(o));
     const feeIncome = realized.reduce(
       (sum, o) => sum + Object.keys(o.responses || {}).filter((id) => o.responses[id] === "yes" && o.payments[id]).length * (o.fee || 0),
       0
@@ -595,7 +644,7 @@ export default function App() {
   }
 
   function stats() {
-    const pastFoci = occasions.filter((o) => o.type === "foci" && isOccasionPast(o));
+    const pastFoci = activeOccasions.filter((o) => o.type === "foci" && isOccasionPast(o));
 
     const attendance = players
       .map((p) => ({
@@ -664,7 +713,7 @@ export default function App() {
     };
   }
 
-  const selected = occasions.find((o) => o.id === selectedId) || occasions[0];
+  const selected = activeOccasions.find((o) => o.id === selectedId) || activeOccasions[0];
 
   if (loading) {
     return (
@@ -708,7 +757,10 @@ export default function App() {
         )}
         {tab === "home" && (
           <HomeTab
-            occasions={occasions}
+            occasions={activeOccasions}
+            deletedOccasions={deletedOccasions}
+            restoreOccasion={restoreOccasion}
+            permanentlyDeleteOccasion={permanentlyDeleteOccasion}
             selected={selected}
             setSelectedId={setSelectedId}
             players={players}
@@ -882,7 +934,8 @@ function Avatar({ player, size = 40 }) {
 
 function HomeTab(props) {
   const {
-    occasions, selected, setSelectedId, players, isAdmin,
+    occasions, deletedOccasions, restoreOccasion, permanentlyDeleteOccasion,
+    selected, setSelectedId, players, isAdmin,
     setResponse, togglePayment, setPaymentMethod, castMotmVote, myPlayerId, chooseMyPlayer,
     updateOccasionFee, updateOccasionCost, deleteOccasion,
     showNewForm, setShowNewForm,
@@ -891,6 +944,7 @@ function HomeTab(props) {
     newLocation, setNewLocation, newLocationOther, setNewLocationOther,
     newFee, setNewFee, newCost, setNewCost, createOccasion,
   } = props;
+  const [showTrash, setShowTrash] = useState(false);
 
   return (
     <div>
@@ -1057,6 +1111,39 @@ function HomeTab(props) {
 
           {selected.type === "foci" && (isMotmVotingOpen(selected) || isMotmVotingClosed(selected)) && (
             <MotmSection occasion={selected} players={players} myPlayerId={myPlayerId} chooseMyPlayer={chooseMyPlayer} castMotmVote={castMotmVote} />
+          )}
+        </div>
+      )}
+
+      {isAdmin && deletedOccasions.length > 0 && (
+        <div className="mt-6">
+          <button onClick={() => setShowTrash(!showTrash)} className="flex items-center gap-2 text-sm font-semibold mb-2" style={{ color: C.textMuted }}>
+            <Trash2 size={16} /> Lomtár ({deletedOccasions.length}) {showTrash ? "▲" : "▼"}
+          </button>
+          <p className="text-xs mb-2" style={{ color: C.textMuted }}>
+            A törölt alkalmak 30 napig itt maradnak, utána automatikusan véglegesen törlődnek.
+          </p>
+          {showTrash && (
+            <div className="space-y-2">
+              {deletedOccasions.map((o) => (
+                <div key={o.id} style={{ background: C.bgCard, border: `1px solid ${C.lineSoft}`, opacity: 0.75 }} className="rounded-xl p-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm capitalize">{o.type === "esemeny" ? o.title : "Heti foci"} — {fmtDate(o.date)}</p>
+                    <p className="text-[11px]" style={{ color: C.textMuted }}>
+                      Törölve: {o.deletedAt ? new Date(o.deletedAt).toLocaleDateString("hu-HU") : "?"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => restoreOccasion(o.id)} title="Visszaállítás" style={{ color: "#5FCB94" }} className="p-2">
+                      <RotateCcw size={16} />
+                    </button>
+                    <button onClick={() => permanentlyDeleteOccasion(o.id)} title="Végleges törlés" style={{ color: C.accent2 }} className="p-2">
+                      <X size={16} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}
@@ -1495,7 +1582,8 @@ function MotmSection({ occasion, players, myPlayerId, chooseMyPlayer, castMotmVo
       {votingOpen && (
         <>
           <p className="text-xs mb-2" style={{ color: C.textMuted }}>
-            Szavazz, ki volt a meccs embere! A szavazás az alkalom végét követő 24 óráig tart.
+            Szavazz, ki volt a meccs embere! A szavazás az alkalom végét követő 24 óráig tart. Az eredmény csak a
+            szavazás lezárása után derül ki.
             {myPlayerId && <> Te mint <b>{players.find((p) => p.id === myPlayerId)?.name}</b> szavazol.</>}
           </p>
           <div className="flex flex-wrap gap-2">
@@ -1517,7 +1605,7 @@ function MotmSection({ occasion, players, myPlayerId, chooseMyPlayer, castMotmVo
                 >
                   <Avatar player={p} size={22} />
                   {p.name}
-                  {tally[p.id] ? <span style={{ opacity: 0.7 }}>· {tally[p.id]}</span> : null}
+                  {voted ? <Check size={14} /> : null}
                 </button>
               );
             })}
@@ -1526,7 +1614,22 @@ function MotmSection({ occasion, players, myPlayerId, chooseMyPlayer, castMotmVo
       )}
 
       {votingClosed && winnerPlayer && (
-        <PlayerOfTheMatchCard occasion={occasion} player={winnerPlayer} votes={winner.votes} />
+        <>
+          <PlayerOfTheMatchCard occasion={occasion} player={winnerPlayer} votes={winner.votes} />
+          <div className="mt-4 space-y-1.5">
+            <p className="text-xs font-semibold" style={{ color: C.textMuted }}>Végeredmény:</p>
+            {candidates
+              .map((p) => ({ ...p, count: tally[p.id] || 0 }))
+              .filter((p) => p.count > 0)
+              .sort((a, b) => b.count - a.count)
+              .map((p) => (
+                <div key={p.id} className="flex items-center justify-between text-xs">
+                  <span style={{ color: C.text }}>{p.name}</span>
+                  <span style={{ color: C.textMuted }}>{p.count} szavazat</span>
+                </div>
+              ))}
+          </div>
+        </>
       )}
       {votingClosed && !winnerPlayer && (
         <p className="text-xs" style={{ color: C.textMuted }}>Erre az alkalomra nem érkezett szavazat.</p>
