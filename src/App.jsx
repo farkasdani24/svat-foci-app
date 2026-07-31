@@ -182,10 +182,10 @@ function buildMailto(occasion, players) {
 
 // --- Supabase <-> app adat mapper függvények (snake_case <-> camelCase) ---
 function fromDbPlayer(row) {
-  return { id: row.id, name: row.name, email: row.email || "", phone: row.phone || "", photo: row.photo || "", jerseyNumber: row.jersey_number || "", isAdmin: !!row.is_admin, isActive: row.is_active !== false, birthday: row.birthday || "" };
+  return { id: row.id, name: row.name, email: row.email || "", phone: row.phone || "", photo: row.photo || "", jerseyNumber: row.jersey_number || "", isAdmin: !!row.is_admin, isActive: row.is_active !== false, birthday: row.birthday || "", hasVests: !!row.has_vests };
 }
 function toDbPlayer(p) {
-  return { id: p.id, name: p.name, email: p.email || null, phone: p.phone || null, photo: p.photo || null, jersey_number: p.jerseyNumber || null, is_admin: !!p.isAdmin, is_active: p.isActive !== false, birthday: p.birthday || null };
+  return { id: p.id, name: p.name, email: p.email || null, phone: p.phone || null, photo: p.photo || null, jersey_number: p.jerseyNumber || null, is_admin: !!p.isAdmin, is_active: p.isActive !== false, birthday: p.birthday || null, has_vests: !!p.hasVests };
 }
 function fromDbOccasion(row) {
   return { id: row.id, type: row.type, title: row.title, date: row.date, startTime: row.start_time, endTime: row.end_time, location: row.location, locationOther: row.location_other || "", fee: row.fee || 0, cost: row.cost || 0, responses: row.responses || {}, payments: row.payments || {}, paymentMethod: row.payment_method || {}, motmVotes: row.motm_votes || {}, isDeleted: !!row.is_deleted, deletedAt: row.deleted_at || null };
@@ -376,6 +376,18 @@ export default function App() {
       return;
     }
     setPlayers((prev) => prev.map((p) => (p.id === player.id ? { ...p, isActive } : p)));
+  }
+
+  async function toggleVests(player) {
+    const hasVests = !player.hasVests;
+    const row = toDbPlayer({ ...player, hasVests });
+    const { error } = await supabase.from("players").upsert(row);
+    if (error) {
+      console.error(error);
+      setStorageError(true);
+      return;
+    }
+    setPlayers((prev) => prev.map((p) => (p.id === player.id ? { ...p, hasVests } : p)));
   }
 
   async function permanentlyDeletePlayer(id) {
@@ -771,6 +783,7 @@ export default function App() {
             castMotmVote={castMotmVote}
             myPlayerId={myPlayerId}
             chooseMyPlayer={chooseMyPlayer}
+            toggleVests={toggleVests}
             updateOccasionFee={updateOccasionFee}
             updateOccasionCost={updateOccasionCost}
             deleteOccasion={deleteOccasion}
@@ -796,6 +809,7 @@ export default function App() {
             openPlayerForm={openPlayerForm}
             setPlayerActive={setPlayerActive}
             permanentlyDeletePlayer={permanentlyDeletePlayer}
+            toggleVests={toggleVests}
           />
         )}
 
@@ -936,7 +950,7 @@ function HomeTab(props) {
   const {
     occasions, deletedOccasions, restoreOccasion, permanentlyDeleteOccasion,
     selected, setSelectedId, players, isAdmin,
-    setResponse, togglePayment, setPaymentMethod, castMotmVote, myPlayerId, chooseMyPlayer,
+    setResponse, togglePayment, setPaymentMethod, castMotmVote, myPlayerId, chooseMyPlayer, toggleVests,
     updateOccasionFee, updateOccasionCost, deleteOccasion,
     showNewForm, setShowNewForm,
     newType, setNewType, newTitle, setNewTitle, newDate, setNewDate,
@@ -1076,6 +1090,17 @@ function HomeTab(props) {
                     <div className="flex items-center gap-2">
                       <Avatar player={p} size={32} />
                       <span className="text-sm">{p.name}{p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}{p.isActive === false ? " (inaktív)" : ""}</span>
+                      {p.hasVests && <span title="Nála vannak a megkülönböztető mezek">🦺</span>}
+                      {isAdmin && (
+                        <button
+                          onClick={() => toggleVests(p)}
+                          title={p.hasVests ? "Mezek elvétele" : "Nála vannak a mezek"}
+                          style={{ background: p.hasVests ? C.accent : "transparent", border: `1px solid ${p.hasVests ? C.accent : C.line}` }}
+                          className="px-1.5 py-0.5 rounded-md text-[11px]"
+                        >
+                          🦺
+                        </button>
+                      )}
                     </div>
                     <div className="flex gap-1">
                       <button onClick={() => !locked && setResponse(selected.id, p.id, "yes")} disabled={locked} style={{ background: response === "yes" ? C.accent : "transparent", border: `1px solid ${response === "yes" ? C.accent : C.line}`, color: response === "yes" ? C.bg : C.textMuted, opacity: locked ? 0.5 : 1, cursor: locked ? "not-allowed" : "pointer" }} className="text-[11px] font-semibold px-2.5 py-1.5 rounded-full">Igen</button>
@@ -1151,7 +1176,7 @@ function HomeTab(props) {
   );
 }
 
-function PlayersTab({ players, isAdmin, openPlayerForm, setPlayerActive, permanentlyDeletePlayer }) {
+function PlayersTab({ players, isAdmin, openPlayerForm, setPlayerActive, permanentlyDeletePlayer, toggleVests }) {
   const active = players.filter((p) => p.isActive !== false);
   const inactive = players.filter((p) => p.isActive === false);
 
@@ -1172,7 +1197,7 @@ function PlayersTab({ players, isAdmin, openPlayerForm, setPlayerActive, permane
       {players.length === 0 && <p style={{ color: C.textMuted }} className="text-sm">Még nincs egy játékos sem. Add hozzá az elsőt!</p>}
       <div className="space-y-2">
         {active.map((p) => (
-          <div key={p.id} style={{ background: C.bgCard, border: `1px solid ${C.line}` }} className="rounded-xl p-3 flex items-center justify-between">
+          <div key={p.id} style={{ background: C.bgCard, border: `1px solid ${p.hasVests ? C.accent : C.line}` }} className="rounded-xl p-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Avatar player={p} size={44} />
               <div>
@@ -1180,6 +1205,7 @@ function PlayersTab({ players, isAdmin, openPlayerForm, setPlayerActive, permane
                   {p.name}
                   {p.jerseyNumber && <span style={{ color: C.accent }}>#{p.jerseyNumber}</span>}
                   {p.isAdmin && <span style={{ background: C.accent, color: C.bg }} className="text-[9px] font-bold px-1.5 py-0.5 rounded-full">ADMIN</span>}
+                  {p.hasVests && <span title="Nála vannak a megkülönböztető mezek">🦺</span>}
                 </p>
                 {p.email && <p className="text-xs" style={{ color: C.textMuted }}>{p.email}</p>}
                 {p.phone && <p className="text-xs" style={{ color: C.textMuted }}>{p.phone}</p>}
@@ -1191,6 +1217,16 @@ function PlayersTab({ players, isAdmin, openPlayerForm, setPlayerActive, permane
               </div>
             </div>
             <div className="flex items-center gap-1">
+              {isAdmin && (
+                <button
+                  onClick={() => toggleVests(p)}
+                  title={p.hasVests ? "Mezek elvétele" : "Nála vannak a mezek"}
+                  style={{ background: p.hasVests ? C.accent : "transparent", border: `1px solid ${p.hasVests ? C.accent : C.line}` }}
+                  className="p-1.5 rounded-lg text-sm"
+                >
+                  🦺
+                </button>
+              )}
               <button onClick={() => openPlayerForm(p)} style={{ color: C.textMuted }} className="p-2"><Pencil size={16} /></button>
               {isAdmin && (
                 <button onClick={() => setPlayerActive(p, false)} title="Archiválás (kikerül az aktív listából, de minden adata megmarad)" style={{ color: C.accent2 }} className="p-2">
