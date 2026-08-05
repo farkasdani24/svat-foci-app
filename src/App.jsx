@@ -1064,6 +1064,23 @@ function HomeTab(props) {
             )}
           </div>
 
+          {(() => {
+            const yesCount = Object.values(selected.responses || {}).filter((v) => v === "yes").length;
+            const noCount = Object.values(selected.responses || {}).filter((v) => v === "no").length;
+            const totalActive = players.filter((p) => p.isActive !== false).length;
+            return (
+              <div style={{ background: C.bgElevated, border: `1px solid ${C.line}` }} className="rounded-lg px-3 py-2 mb-3 flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <span style={{ background: C.accent, color: C.bg }} className="font-display text-lg leading-none px-2 py-1 rounded-md">{yesCount}</span>
+                  <span className="text-xs" style={{ color: C.textMuted }}>fő jön</span>
+                </div>
+                <span className="text-[11px]" style={{ color: C.textMuted }}>
+                  {noCount} nem jön · {Math.max(totalActive - yesCount - noCount, 0)} nem válaszolt
+                </span>
+              </div>
+            );
+          })()}
+
           {isAdmin && (
             <a href={buildMailto(selected, players)} style={{ background: C.bgElevated, color: C.accent, border: `1px solid ${C.line}` }} className="mt-2 mb-3 flex items-center justify-center gap-2 text-xs font-semibold px-3 py-2 rounded-lg">
               <Mail size={14} /> Értesítés küldése emailben
