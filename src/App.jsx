@@ -19,6 +19,7 @@ import {
   RotateCcw,
   Recycle,
   Check,
+  Shuffle,
 } from "lucide-react";
 import {
   BarChart,
@@ -188,10 +189,10 @@ function toDbPlayer(p) {
   return { id: p.id, name: p.name, email: p.email || null, phone: p.phone || null, photo: p.photo || null, jersey_number: p.jerseyNumber || null, is_admin: !!p.isAdmin, is_active: p.isActive !== false, birthday: p.birthday || null, has_vests: !!p.hasVests };
 }
 function fromDbOccasion(row) {
-  return { id: row.id, type: row.type, title: row.title, date: row.date, startTime: row.start_time, endTime: row.end_time, location: row.location, locationOther: row.location_other || "", fee: row.fee || 0, cost: row.cost || 0, responses: row.responses || {}, payments: row.payments || {}, paymentMethod: row.payment_method || {}, motmVotes: row.motm_votes || {}, isDeleted: !!row.is_deleted, deletedAt: row.deleted_at || null };
+  return { id: row.id, type: row.type, title: row.title, date: row.date, startTime: row.start_time, endTime: row.end_time, location: row.location, locationOther: row.location_other || "", fee: row.fee || 0, cost: row.cost || 0, responses: row.responses || {}, payments: row.payments || {}, paymentMethod: row.payment_method || {}, motmVotes: row.motm_votes || {}, isDeleted: !!row.is_deleted, deletedAt: row.deleted_at || null, teams: row.teams || [] };
 }
 function toDbOccasion(o) {
-  return { id: o.id, type: o.type, title: o.title, date: o.date, start_time: o.startTime, end_time: o.endTime, location: o.location, location_other: o.locationOther || null, fee: o.fee || 0, cost: o.cost || 0, responses: o.responses || {}, payments: o.payments || {}, payment_method: o.paymentMethod || {}, motm_votes: o.motmVotes || {}, is_deleted: !!o.isDeleted, deleted_at: o.deletedAt || null };
+  return { id: o.id, type: o.type, title: o.title, date: o.date, start_time: o.startTime, end_time: o.endTime, location: o.location, location_other: o.locationOther || null, fee: o.fee || 0, cost: o.cost || 0, responses: o.responses || {}, payments: o.payments || {}, payment_method: o.paymentMethod || {}, motm_votes: o.motmVotes || {}, is_deleted: !!o.isDeleted, deleted_at: o.deletedAt || null, teams: o.teams || [] };
 }
 function fromDbExtra(row) {
   return { id: row.id, label: row.label, amount: row.amount, targetIds: row.target_ids || [], payments: row.payments || {} };
@@ -507,6 +508,48 @@ export default function App() {
     );
   }
 
+  function drawTeams(occId, numTeams) {
+    setOccasions((prev) =>
+      prev.map((o) => {
+        if (o.id !== occId) return o;
+        const yesIds = Object.keys(o.responses || {}).filter((id) => o.responses[id] === "yes");
+        const shuffled = [...yesIds].sort(() => Math.random() - 0.5);
+        const teams = Array.from({ length: numTeams }, () => ({ playerIds: [], goalkeeperId: null }));
+        shuffled.forEach((id, i) => {
+          teams[i % numTeams].playerIds.push(id);
+        });
+        const updated = { ...o, teams };
+        persistOccasion(updated);
+        return updated;
+      })
+    );
+  }
+
+  function clearTeams(occId) {
+    setOccasions((prev) =>
+      prev.map((o) => {
+        if (o.id !== occId) return o;
+        const updated = { ...o, teams: [] };
+        persistOccasion(updated);
+        return updated;
+      })
+    );
+  }
+
+  function setTeamGoalkeeper(occId, teamIndex, playerId) {
+    setOccasions((prev) =>
+      prev.map((o) => {
+        if (o.id !== occId) return o;
+        const teams = (o.teams || []).map((t, i) =>
+          i === teamIndex ? { ...t, goalkeeperId: t.goalkeeperId === playerId ? null : playerId } : t
+        );
+        const updated = { ...o, teams };
+        persistOccasion(updated);
+        return updated;
+      })
+    );
+  }
+
   function updateOccasionFee(occId, fee) {
     setOccasions((prev) =>
       prev.map((o) => {
@@ -781,6 +824,9 @@ export default function App() {
             togglePayment={togglePayment}
             setPaymentMethod={setPaymentMethod}
             castMotmVote={castMotmVote}
+            drawTeams={drawTeams}
+            clearTeams={clearTeams}
+            setTeamGoalkeeper={setTeamGoalkeeper}
             myPlayerId={myPlayerId}
             chooseMyPlayer={chooseMyPlayer}
             toggleVests={toggleVests}
@@ -950,7 +996,7 @@ function HomeTab(props) {
   const {
     occasions, deletedOccasions, restoreOccasion, permanentlyDeleteOccasion,
     selected, setSelectedId, players, isAdmin,
-    setResponse, togglePayment, setPaymentMethod, castMotmVote, myPlayerId, chooseMyPlayer, toggleVests,
+    setResponse, togglePayment, setPaymentMethod, castMotmVote, drawTeams, clearTeams, setTeamGoalkeeper, myPlayerId, chooseMyPlayer, toggleVests,
     updateOccasionFee, updateOccasionCost, deleteOccasion,
     showNewForm, setShowNewForm,
     newType, setNewType, newTitle, setNewTitle, newDate, setNewDate,
@@ -1150,6 +1196,10 @@ function HomeTab(props) {
               );
             })}
           </div>
+
+          {selected.type === "foci" && (
+            <TeamDrawSection occasion={selected} players={players} isAdmin={isAdmin} drawTeams={drawTeams} clearTeams={clearTeams} setTeamGoalkeeper={setTeamGoalkeeper} />
+          )}
 
           {selected.type === "foci" && (isMotmVotingOpen(selected) || isMotmVotingClosed(selected)) && (
             <MotmSection occasion={selected} players={players} myPlayerId={myPlayerId} chooseMyPlayer={chooseMyPlayer} castMotmVote={castMotmVote} />
@@ -1592,6 +1642,95 @@ function MohuTab() {
         A visszaváltó automatánál az összes palack betétele után válaszd a "bankszámlára kérem az
         utalást" / jótékonysági opciót, majd olvasd be ezt a kódot.
       </p>
+    </div>
+  );
+}
+
+const TEAM_COLORS = ["#FFC857", "#5FCB94", "#7FB2E5", "#EF6461"];
+
+function TeamDrawSection({ occasion, players, isAdmin, drawTeams, clearTeams, setTeamGoalkeeper }) {
+  const yesIds = Object.keys(occasion.responses || {}).filter((id) => occasion.responses[id] === "yes");
+  const [numTeams, setNumTeams] = useState(yesIds.length > 12 ? 3 : 2);
+  const teams = occasion.teams || [];
+  const hasTeams = teams.length > 0;
+
+  function playerById(id) {
+    return players.find((p) => p.id === id);
+  }
+
+  if (yesIds.length < 4) return null;
+
+  return (
+    <div className="mt-5 pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
+      <div className="flex items-center gap-2 mb-3">
+        <Shuffle size={18} color={C.accent} />
+        <p className="font-semibold text-sm">Csapatbeosztás</p>
+      </div>
+
+      {isAdmin && (
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-xs" style={{ color: C.textMuted }}>Hány csapat legyen?</span>
+          <div className="flex gap-1">
+            {[2, 3, 4].map((n) => (
+              <button
+                key={n}
+                onClick={() => setNumTeams(n)}
+                style={{ background: numTeams === n ? C.accent : "transparent", border: `1px solid ${numTeams === n ? C.accent : C.line}`, color: numTeams === n ? C.bg : C.textMuted }}
+                className="w-8 h-8 rounded-full text-xs font-semibold"
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+          <button onClick={() => drawTeams(occasion.id, numTeams)} style={{ background: C.accent, color: C.bg }} className="ml-auto flex items-center gap-1 text-xs font-semibold px-3 py-2 rounded-full">
+            <Shuffle size={14} /> {hasTeams ? "Újrasorsolás" : "Sorsolás"}
+          </button>
+        </div>
+      )}
+
+      {!hasTeams && !isAdmin && <p className="text-xs" style={{ color: C.textMuted }}>Az admin még nem sorsolta ki a csapatokat.</p>}
+
+      {hasTeams && (
+        <div className="grid grid-cols-1 gap-3" style={{ gridTemplateColumns: teams.length > 1 ? "repeat(auto-fit, minmax(130px, 1fr))" : "1fr" }}>
+          {teams.map((team, i) => (
+            <div key={i} style={{ background: C.bgCard, border: `1px solid ${TEAM_COLORS[i % TEAM_COLORS.length]}` }} className="rounded-xl p-3">
+              <p style={{ color: TEAM_COLORS[i % TEAM_COLORS.length] }} className="font-display text-lg mb-2">
+                {i + 1}. CSAPAT ({team.playerIds.length} fő)
+              </p>
+              <div className="space-y-1.5">
+                {team.playerIds.map((id) => {
+                  const p = playerById(id);
+                  if (!p) return null;
+                  const isGk = team.goalkeeperId === id;
+                  return (
+                    <div key={id} className="flex items-center justify-between">
+                      <span className="text-xs flex items-center gap-1" style={{ color: C.text }}>
+                        {p.name}
+                        {isGk && <span title="Kapus">🧤</span>}
+                      </span>
+                      {isAdmin && (
+                        <button
+                          onClick={() => setTeamGoalkeeper(occasion.id, i, id)}
+                          style={{ color: isGk ? C.accent : C.textMuted }}
+                          className="text-[10px]"
+                        >
+                          {isGk ? "kapus ✓" : "kapus?"}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {hasTeams && isAdmin && (
+        <button onClick={() => clearTeams(occasion.id)} className="text-xs mt-3" style={{ color: C.textMuted }}>
+          Beosztás törlése
+        </button>
+      )}
     </div>
   );
 }
