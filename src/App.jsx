@@ -283,7 +283,8 @@ export default function App() {
       }
 
       const activeOcc = occ.filter((o) => !o.isDeleted);
-      setPlayers(playerRows.map(fromDbPlayer));
+      const sortedPlayers = playerRows.map(fromDbPlayer).sort((a, b) => a.name.localeCompare(b.name, "hu"));
+      setPlayers(sortedPlayers);
       setOccasions(occ);
       setExtraFees((eRes.data || []).map(fromDbExtra));
       setAdminPassword(sRes.data ? sRes.data.value : null);
@@ -364,7 +365,8 @@ export default function App() {
     }
     setPlayers((prev) => {
       const exists = prev.some((p) => p.id === id);
-      return exists ? prev.map((p) => (p.id === id ? { ...playerDraft, id } : p)) : [...prev, { ...playerDraft, id }];
+      const next = exists ? prev.map((p) => (p.id === id ? { ...playerDraft, id } : p)) : [...prev, { ...playerDraft, id }];
+      return next.sort((a, b) => a.name.localeCompare(b.name, "hu"));
     });
     setShowPlayerForm(false);
     setEditingPlayer(null);
