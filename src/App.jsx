@@ -123,6 +123,25 @@ function motmTally(o) {
   });
   return counts;
 }
+function goalTally(o) {
+  const counts = {};
+  Object.values(o.goalVotes || {}).forEach((id) => {
+    counts[id] = (counts[id] || 0) + 1;
+  });
+  return counts;
+}
+function goalWinner(o) {
+  const counts = goalTally(o);
+  let winnerId = null;
+  let max = 0;
+  Object.entries(counts).forEach(([id, c]) => {
+    if (c > max) {
+      max = c;
+      winnerId = id;
+    }
+  });
+  return winnerId ? { playerId: winnerId, votes: max } : null;
+}
 function motmWinner(o) {
   const counts = motmTally(o);
   let winnerId = null;
@@ -191,10 +210,10 @@ function toDbPlayer(p) {
   return { id: p.id, name: p.name, email: p.email || null, phone: p.phone || null, photo: p.photo || null, jersey_number: p.jerseyNumber || null, is_admin: !!p.isAdmin, is_active: p.isActive !== false, birthday: p.birthday || null, has_vests: !!p.hasVests };
 }
 function fromDbOccasion(row) {
-  return { id: row.id, type: row.type, title: row.title, date: row.date, startTime: row.start_time, endTime: row.end_time, location: row.location, locationOther: row.location_other || "", fee: row.fee || 0, cost: row.cost || 0, responses: row.responses || {}, payments: row.payments || {}, paymentMethod: row.payment_method || {}, motmVotes: row.motm_votes || {}, isDeleted: !!row.is_deleted, deletedAt: row.deleted_at || null, teams: row.teams || [] };
+  return { id: row.id, type: row.type, title: row.title, date: row.date, startTime: row.start_time, endTime: row.end_time, location: row.location, locationOther: row.location_other || "", fee: row.fee || 0, cost: row.cost || 0, responses: row.responses || {}, payments: row.payments || {}, paymentMethod: row.payment_method || {}, motmVotes: row.motm_votes || {}, goalVotes: row.goal_votes || {}, isDeleted: !!row.is_deleted, deletedAt: row.deleted_at || null, teams: row.teams || [] };
 }
 function toDbOccasion(o) {
-  return { id: o.id, type: o.type, title: o.title, date: o.date, start_time: o.startTime, end_time: o.endTime, location: o.location, location_other: o.locationOther || null, fee: o.fee || 0, cost: o.cost || 0, responses: o.responses || {}, payments: o.payments || {}, payment_method: o.paymentMethod || {}, motm_votes: o.motmVotes || {}, is_deleted: !!o.isDeleted, deleted_at: o.deletedAt || null, teams: o.teams || [] };
+  return { id: o.id, type: o.type, title: o.title, date: o.date, start_time: o.startTime, end_time: o.endTime, location: o.location, location_other: o.locationOther || null, fee: o.fee || 0, cost: o.cost || 0, responses: o.responses || {}, payments: o.payments || {}, payment_method: o.paymentMethod || {}, motm_votes: o.motmVotes || {}, goal_votes: o.goalVotes || {}, is_deleted: !!o.isDeleted, deleted_at: o.deletedAt || null, teams: o.teams || [] };
 }
 function fromDbExtra(row) {
   return { id: row.id, label: row.label, amount: row.amount, targetIds: row.target_ids || [], payments: row.payments || {} };
@@ -433,6 +452,7 @@ export default function App() {
       payments: {},
       paymentMethod: {},
       motmVotes: {},
+      goalVotes: {},
     };
     const { error } = await supabase.from("occasions").insert(toDbOccasion(o));
     if (error) {
@@ -493,6 +513,19 @@ export default function App() {
           paymentMethod[playerId] = method;
         }
         const updated = { ...o, paymentMethod };
+        persistOccasion(updated);
+        return updated;
+      })
+    );
+  }
+
+  function castGoalVote(occId, votedForId) {
+    if (!myPlayerId || myPlayerId === votedForId) return;
+    setOccasions((prev) =>
+      prev.map((o) => {
+        if (o.id !== occId) return o;
+        const goalVotes = { ...(o.goalVotes || {}), [myPlayerId]: votedForId };
+        const updated = { ...o, goalVotes };
         persistOccasion(updated);
         return updated;
       })
@@ -758,6 +791,16 @@ export default function App() {
       .filter((p) => p.count > 0)
       .sort((a, b) => b.count - a.count);
 
+    const goalCounts = {};
+    pastFoci.forEach((o) => {
+      const w = goalWinner(o);
+      if (w) goalCounts[w.playerId] = (goalCounts[w.playerId] || 0) + 1;
+    });
+    const goalLeaderboard = players
+      .map((p) => ({ name: p.name, count: goalCounts[p.id] || 0 }))
+      .filter((p) => p.count > 0)
+      .sort((a, b) => b.count - a.count);
+
     return {
       attendance,
       locationData,
@@ -768,6 +811,7 @@ export default function App() {
       totalPersonMinutes,
       totalCalories,
       motmLeaderboard,
+      goalLeaderboard,
       topPlayer: attendance[0],
     };
   }
@@ -828,6 +872,7 @@ export default function App() {
             togglePayment={togglePayment}
             setPaymentMethod={setPaymentMethod}
             castMotmVote={castMotmVote}
+            castGoalVote={castGoalVote}
             drawTeams={drawTeams}
             clearTeams={clearTeams}
             setTeamGoalkeeper={setTeamGoalkeeper}
@@ -1000,7 +1045,7 @@ function HomeTab(props) {
   const {
     occasions, deletedOccasions, restoreOccasion, permanentlyDeleteOccasion,
     selected, setSelectedId, players, isAdmin,
-    setResponse, togglePayment, setPaymentMethod, castMotmVote, drawTeams, clearTeams, setTeamGoalkeeper, myPlayerId, chooseMyPlayer, toggleVests,
+    setResponse, togglePayment, setPaymentMethod, castMotmVote, castGoalVote, drawTeams, clearTeams, setTeamGoalkeeper, myPlayerId, chooseMyPlayer, toggleVests,
     updateOccasionFee, updateOccasionCost, deleteOccasion,
     showNewForm, setShowNewForm,
     newType, setNewType, newTitle, setNewTitle, newDate, setNewDate,
@@ -1206,7 +1251,10 @@ function HomeTab(props) {
           )}
 
           {selected.type === "foci" && (isMotmVotingOpen(selected) || isMotmVotingClosed(selected)) && (
+            <>
             <MotmSection occasion={selected} players={players} myPlayerId={myPlayerId} chooseMyPlayer={chooseMyPlayer} castMotmVote={castMotmVote} />
+            <GoalSection occasion={selected} players={players} myPlayerId={myPlayerId} chooseMyPlayer={chooseMyPlayer} castGoalVote={castGoalVote} />
+            </>
           )}
         </div>
       )}
@@ -1511,7 +1559,7 @@ function StatCard({ label, value, sub }) {
 }
 
 function StatsTab({ stats }) {
-  const { attendance, locationData, monthlyData, totalGames, totalAttendance, avgAttendance, totalPersonMinutes, totalCalories, motmLeaderboard, topPlayer } = stats;
+  const { attendance, locationData, monthlyData, totalGames, totalAttendance, avgAttendance, totalPersonMinutes, totalCalories, motmLeaderboard, goalLeaderboard, topPlayer } = stats;
   const topFive = attendance.filter((a) => a.count > 0).slice(0, 8);
   const totalHours = totalPersonMinutes / 60;
 
@@ -1558,6 +1606,19 @@ function StatsTab({ stats }) {
           <p className="text-sm font-semibold mb-3">🏆 A hét embere — összesítés</p>
           <div className="space-y-2">
             {motmLeaderboard.map((p, i) => (
+              <div key={p.name} className="flex items-center justify-between text-sm">
+                <span style={{ color: C.text }}>{i + 1}. {p.name}</span>
+                <span style={{ color: C.accent }} className="font-semibold">{p.count}×</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {goalLeaderboard.length > 0 && (
+        <div style={{ background: C.bgCard, border: `1px solid ${C.line}` }} className="rounded-xl p-4 mb-4">
+          <p className="text-sm font-semibold mb-3">⚽ A hét gólja — összesítés</p>
+          <div className="space-y-2">
+            {goalLeaderboard.map((p, i) => (
               <div key={p.name} className="flex items-center justify-between text-sm">
                 <span style={{ color: C.text }}>{i + 1}. {p.name}</span>
                 <span style={{ color: C.accent }} className="font-semibold">{p.count}×</span>
@@ -1826,6 +1887,107 @@ function MotmSection({ occasion, players, myPlayerId, chooseMyPlayer, castMotmVo
               ))}
           </div>
         </>
+      )}
+      {votingClosed && !winnerPlayer && (
+        <p className="text-xs" style={{ color: C.textMuted }}>Erre az alkalomra nem érkezett szavazat.</p>
+      )}
+    </div>
+  );
+}
+
+function GoalSection({ occasion, players, myPlayerId, chooseMyPlayer, castGoalVote }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const candidates = players.filter((p) => (occasion.responses || {})[p.id] === "yes");
+  const votingOpen = isMotmVotingOpen(occasion);
+  const votingClosed = isMotmVotingClosed(occasion);
+  const tally = goalTally(occasion);
+  const winner = goalWinner(occasion);
+  const winnerPlayer = winner ? players.find((p) => p.id === winner.playerId) : null;
+  const myVote = myPlayerId ? (occasion.goalVotes || {})[myPlayerId] : null;
+
+  if (candidates.length === 0) return null;
+
+  return (
+    <div className="mt-5 pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
+      <div className="flex items-center gap-2 mb-3">
+        <Trophy size={18} color={C.accent} />
+        <p className="font-semibold text-sm">A hét gólja szavazás</p>
+      </div>
+
+      {!myPlayerId && votingOpen && (
+        <div className="mb-3">
+          <button onClick={() => setPickerOpen(!pickerOpen)} style={{ background: C.bgElevated, border: `1px solid ${C.line}`, color: C.textMuted }} className="text-xs px-3 py-2 rounded-lg font-semibold">
+            Ki vagy te? Válaszd ki, hogy tudj szavazni
+          </button>
+          {pickerOpen && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {players.filter((p) => p.isActive !== false).map((p) => (
+                <button key={p.id} onClick={() => { chooseMyPlayer(p.id); setPickerOpen(false); }} style={{ background: C.bgCard, border: `1px solid ${C.line}`, color: C.text }} className="text-xs px-2.5 py-1.5 rounded-full">
+                  {p.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {votingOpen && (
+        <>
+          <p className="text-xs mb-2" style={{ color: C.textMuted }}>
+            Szavazz, ki lőtte a hét gólját! Csak azokra lehet szavazni, akik ott voltak. A szavazás az alkalom végét követő 24 óráig tart, az eredmény utána derül ki.
+            {myPlayerId && <> Te mint <b>{players.find((p) => p.id === myPlayerId)?.name}</b> szavazol.</>}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {candidates.map((p) => {
+              const voted = myVote === p.id;
+              const disabled = !myPlayerId || myPlayerId === p.id;
+              return (
+                <button
+                  key={p.id}
+                  disabled={disabled}
+                  onClick={() => castGoalVote(occasion.id, p.id)}
+                  style={{
+                    background: voted ? C.accent : C.bgCard,
+                    border: `1px solid ${voted ? C.accent : C.line}`,
+                    color: voted ? C.bg : C.text,
+                    opacity: disabled && myPlayerId !== p.id ? 0.5 : 1,
+                  }}
+                  className="flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-full"
+                >
+                  <Avatar player={p} size={22} />
+                  {p.name}
+                  {voted ? <Check size={14} /> : null}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {votingClosed && winnerPlayer && (
+        <div>
+          <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: C.bgElevated, border: `1px solid ${C.accent}` }}>
+            <Avatar player={winnerPlayer} size={44} />
+            <div>
+              <p className="text-xs" style={{ color: C.textMuted }}>A hét gólját lőtte</p>
+              <p className="font-bold text-base">{winnerPlayer.name}</p>
+              <p className="text-xs" style={{ color: C.textMuted }}>{winner.votes} szavazat</p>
+            </div>
+          </div>
+          <div className="mt-3 space-y-1.5">
+            <p className="text-xs font-semibold" style={{ color: C.textMuted }}>Végeredmény:</p>
+            {candidates
+              .map((p) => ({ ...p, count: tally[p.id] || 0 }))
+              .filter((p) => p.count > 0)
+              .sort((a, b) => b.count - a.count)
+              .map((p) => (
+                <div key={p.id} className="flex items-center justify-between text-xs">
+                  <span style={{ color: C.text }}>{p.name}</span>
+                  <span style={{ color: C.textMuted }}>{p.count} szavazat</span>
+                </div>
+              ))}
+          </div>
+        </div>
       )}
       {votingClosed && !winnerPlayer && (
         <p className="text-xs" style={{ color: C.textMuted }}>Erre az alkalomra nem érkezett szavazat.</p>
